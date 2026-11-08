@@ -119,9 +119,14 @@ struct ImportBar: View {
         }
         .padding(.horizontal)
         .padding(.vertical, 8)
-        .fileImporter(isPresented: $showFolderPicker,
-                      allowedContentTypes: [.folder]) { result in
-            if case .success(let url) = result { importer.setFolder(url) }
+        .sheet(isPresented: $showFolderPicker) {
+            FolderPicker(
+                onPick: { url in
+                    importer.setFolder(url)
+                    showFolderPicker = false
+                },
+                onCancel: { showFolderPicker = false }
+            )
         }
     }
 }
