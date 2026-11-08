@@ -27,7 +27,15 @@ final class PlayerManager: NSObject, ObservableObject, AVAudioPlayerDelegate {
         didSet { UserDefaults.standard.set(repeatMode.rawValue, forKey: "repeatMode") }
     }
 
+    /// Thời gian crossfade (giây). 0 = tắt. Được nhớ lại sau khi mở app.
+    @Published var crossfadeSeconds: Double = UserDefaults.standard.object(forKey: "crossfadeSeconds") as? Double ?? 6 {
+        didSet { UserDefaults.standard.set(crossfadeSeconds, forKey: "crossfadeSeconds") }
+    }
+
     private var player: AVAudioPlayer?
+    /// Bài cũ đang mờ dần trong lúc crossfade.
+    private var outgoing: AVAudioPlayer?
+    private var fadeTriggered = false
     private var timer: Timer?
 
     /// Thứ tự phát hiện tại (danh sách chỉ số của `tracks`) và vị trí đang phát trong đó.
@@ -134,6 +142,9 @@ final class PlayerManager: NSObject, ObservableObject, AVAudioPlayerDelegate {
         guard tracks.indices.contains(index) else { return }
         do {
             let p = try AVAudioPlayer(contentsOf: tracks[index].url)
+            player?.stop()
+            outgoing?.stop()
+            outgoing = nil
             p.delegate = self
             p.prepareToPlay()
             p.play()
@@ -142,6 +153,7 @@ final class PlayerManager: NSObject, ObservableObject, AVAudioPlayerDelegate {
             duration = p.duration
             currentTime = 0
             isPlaying = true
+            fadeTriggered = false
             startTimer()
             updateNowPlaying()
         } catch {
@@ -149,7 +161,47 @@ final class PlayerManager: NSObject, ObservableObject, AVAudioPlayerDelegate {
         }
     }
 
+    // MARK: - Crossfade
+
+    /// Bài sắp hết: chồng bài kế tiếp vào, bài cũ nhỏ dần, bài mới to dần.
+    private func startCrossfade(to index: Int) {
+        guard tracks.indices.contains(index), let old = player else { return }
+        do {
+            let d = crossfadeSeconds
+            let p = try AVAudioPlayer(contentsOf: tracks[index].url)
+            old.delegate = nil
+            p.delegate = self
+            p.volume = 0
+            p.prepareToPlay()
+            p.play()
+            p.setVolume(1, fadeDuration: d)
+            old.setVolume(0, fadeDuration: d)
+            outgoing = old
+            player = p
+            currentIndex = index
+            duration = p.duration
+            currentTime = 0
+            fadeTriggered = false
+            updateNowPlaying()
+            DispatchQueue.main.asyncAfter(deadline: .now() + d + 0.3) { [weak self] in
+                old.stop()
+                if self?.outgoing === old { self?.outgoing = nil }
+            }
+        } catch {
+            print("Crossfade lỗi: \(error)")
+        }
+    }
+
+    /// Kết thúc crossfade ngay (khi tạm dừng, tua, bị gián đoạn).
+    private func finishFade() {
+        guard outgoing != nil else { return }
+        outgoing?.stop()
+        outgoing = nil
+        player?.volume = 1
+    }
+
     func togglePlay() {
+        finishFade()
         guard let p = player else {
             if !tracks.isEmpty { play(index: shuffleOn ? Int.random(in: tracks.indices) : 0) }
             return
@@ -158,21 +210,23 @@ final class PlayerManager: NSObject, ObservableObject, AVAudioPlayerDelegate {
         updateNowPlaying()
     }
 
+    /// Chuyển vị trí sang bài kế tiếp trong hàng chờ, trả về chỉ số bài đó.
     /// manual = true: người dùng bấm "bài tiếp" (hết danh sách thì quay lại đầu).
-    /// manual = false: bài tự hết (hết danh sách và không lặp thì dừng).
-    func next(manual: Bool = true) {
-        guard !order.isEmpty else { return }
+    /// manual = false: bài tự hết (hết danh sách và không lặp thì trả về nil để dừng).
+    private func advance(manual: Bool) -> Int? {
+        guard !order.isEmpty else { return nil }
         var newPos = pos + 1
         if newPos >= order.count {
-            if !manual && repeatMode == .off {
-                stop()
-                return
-            }
+            if !manual && repeatMode == .off { return nil }
             newPos = 0
             if shuffleOn { rebuildOrder(keeping: nil) } // trộn lại vòng mới
         }
         pos = newPos
-        playTrack(order[pos])
+        return order[pos]
+    }
+
+    func next(manual: Bool = true) {
+        if let i = advance(manual: manual) { playTrack(i) } else { stop() }
     }
 
     func previous() {
@@ -183,6 +237,7 @@ final class PlayerManager: NSObject, ObservableObject, AVAudioPlayerDelegate {
     }
 
     private func stop() {
+        finishFade()
         player?.pause()
         player?.currentTime = 0
         isPlaying = false
@@ -191,13 +246,14 @@ final class PlayerManager: NSObject, ObservableObject, AVAudioPlayerDelegate {
     }
 
     func seek(_ time: TimeInterval) {
+        finishFade()
         player?.currentTime = time
         currentTime = time
         updateNowPlaying()
     }
 
-    func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
-        guard flag else { return }
+    func audioPlayerDidFinishPlaying(_ finished: AVAudioPlayer, successfully flag: Bool) {
+        guard flag, finished === player else { return }
         if repeatMode == .one, let i = currentIndex {
             playTrack(i)
         } else {
@@ -209,10 +265,21 @@ final class PlayerManager: NSObject, ObservableObject, AVAudioPlayerDelegate {
 
     private func startTimer() {
         timer?.invalidate()
-        timer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
-            guard let self, let p = self.player else { return }
-            self.currentTime = p.currentTime
+        timer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak self] _ in
+            self?.tick()
         }
+    }
+
+    private func tick() {
+        guard let p = player else { return }
+        currentTime = p.currentTime
+        guard crossfadeSeconds > 0, isPlaying, outgoing == nil,
+              !fadeTriggered, repeatMode != .one else { return }
+        let d = crossfadeSeconds
+        // Bài quá ngắn thì không crossfade.
+        guard p.duration > d * 2 + 1, p.duration - p.currentTime <= d else { return }
+        fadeTriggered = true
+        if let i = advance(manual: false) { startCrossfade(to: i) }
     }
 
     private func setupSession() {
@@ -226,6 +293,7 @@ final class PlayerManager: NSObject, ObservableObject, AVAudioPlayerDelegate {
                   let raw = note.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt,
                   let type = AVAudioSession.InterruptionType(rawValue: raw) else { return }
             if type == .began {
+                self.finishFade()
                 self.isPlaying = false
             } else if let optRaw = note.userInfo?[AVAudioSessionInterruptionOptionKey] as? UInt,
                       AVAudioSession.InterruptionOptions(rawValue: optRaw).contains(.shouldResume) {
