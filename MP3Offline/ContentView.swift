@@ -36,6 +36,12 @@ struct ContentView: View {
             }
             .navigationTitle("MP3 Offline")
             .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    Button { player.shuffleAll() } label: {
+                        Label("Phát ngẫu nhiên", systemImage: "shuffle")
+                    }
+                    .disabled(player.tracks.isEmpty)
+                }
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button { showImporter = true } label: { Image(systemName: "plus") }
                 }
@@ -67,13 +73,21 @@ struct PlayerBar: View {
             }
             .font(.caption)
             .foregroundStyle(.secondary)
-            HStack(spacing: 40) {
+            HStack(spacing: 28) {
+                Button { player.toggleShuffle() } label: {
+                    Image(systemName: "shuffle")
+                        .foregroundStyle(player.shuffleOn ? Color.accentColor : Color.secondary)
+                }
                 Button { player.previous() } label: { Image(systemName: "backward.fill") }
                 Button { player.togglePlay() } label: {
                     Image(systemName: player.isPlaying ? "pause.circle.fill" : "play.circle.fill")
                         .font(.system(size: 52))
                 }
                 Button { player.next() } label: { Image(systemName: "forward.fill") }
+                Button { player.cycleRepeat() } label: {
+                    Image(systemName: player.repeatMode == .one ? "repeat.1" : "repeat")
+                        .foregroundStyle(player.repeatMode == .off ? Color.secondary : Color.accentColor)
+                }
             }
             .font(.title2)
         }
