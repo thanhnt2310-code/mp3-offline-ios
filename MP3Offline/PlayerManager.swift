@@ -65,10 +65,12 @@ final class PlayerManager: NSObject, ObservableObject, AVAudioPlayerDelegate {
         let files = (try? FileManager.default.contentsOfDirectory(
             at: Self.musicDir, includingPropertiesForKeys: nil)) ?? []
         let currentURL = currentIndex.flatMap { tracks.indices.contains($0) ? tracks[$0].id : nil }
-        tracks = files
+        let newTracks = files
             .filter { $0.pathExtension.lowercased() == "mp3" }
             .sorted { $0.lastPathComponent.localizedCaseInsensitiveCompare($1.lastPathComponent) == .orderedAscending }
             .map { Track(id: $0, title: $0.deletingPathExtension().lastPathComponent) }
+        if newTracks == tracks { return }
+        tracks = newTracks
         if let currentURL { currentIndex = tracks.firstIndex { $0.id == currentURL } }
         rebuildOrder(keeping: currentIndex)
     }
