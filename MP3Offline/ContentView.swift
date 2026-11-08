@@ -42,7 +42,18 @@ struct ContentView: View {
                     }
                     .disabled(player.tracks.isEmpty)
                 }
-                ToolbarItem(placement: .navigationBarTrailing) {
+                ToolbarItemGroup(placement: .navigationBarTrailing) {
+                    Menu {
+                        Picker("Crossfade", selection: $player.crossfadeSeconds) {
+                            Text("Crossfade: Tắt").tag(0.0)
+                            Text("Crossfade: 3 giây").tag(3.0)
+                            Text("Crossfade: 6 giây").tag(6.0)
+                            Text("Crossfade: 9 giây").tag(9.0)
+                            Text("Crossfade: 12 giây").tag(12.0)
+                        }
+                    } label: {
+                        Image(systemName: "waveform.path")
+                    }
                     Button { showImporter = true } label: { Image(systemName: "plus") }
                 }
             }
