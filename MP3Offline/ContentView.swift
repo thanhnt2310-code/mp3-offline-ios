@@ -3,14 +3,18 @@ import UniformTypeIdentifiers
 
 struct ContentView: View {
     @EnvironmentObject var player: PlayerManager
-    @State private var showImporter = false
+    @EnvironmentObject var importer: FolderImporter
+    @Environment(\.scenePhase) private var scenePhase
+    @State private var showFilePicker = false
 
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
+                ImportBar()
+                Divider()
                 if player.tracks.isEmpty {
                     Spacer()
-                    Text("Chưa có bài hát nào.\nBấm + để thêm file mp3.")
+                    Text("Chưa có bài hát nào.\nChọn thư mục nguồn rồi bấm Import.")
                         .multilineTextAlignment(.center)
                         .foregroundStyle(.secondary)
                     Spacer()
@@ -54,14 +58,70 @@ struct ContentView: View {
                     } label: {
                         Image(systemName: "waveform.path")
                     }
-                    Button { showImporter = true } label: { Image(systemName: "plus") }
+                    Menu {
+                        Button { showFilePicker = true } label: {
+                            Label("Thêm file mp3 thủ công", systemImage: "doc.badge.plus")
+                        }
+                        Button { importer.resetHistory() } label: {
+                            Label("Cho phép import lại bài đã xóa", systemImage: "arrow.counterclockwise")
+                        }
+                    } label: {
+                        Image(systemName: "ellipsis.circle")
+                    }
                 }
             }
-            .fileImporter(isPresented: $showImporter,
+            .fileImporter(isPresented: $showFilePicker,
                           allowedContentTypes: [.mp3],
                           allowsMultipleSelection: true) { result in
                 if case .success(let urls) = result { player.importFiles(urls) }
             }
+        }
+        .onChange(of: scenePhase) { phase in
+            // Mở lại app: quét lại thư mục Documents (file thêm bằng cáp / Files).
+            if phase == .active { player.reload() }
+        }
+    }
+}
+
+/// Thanh import: chọn thư mục nguồn một lần, sau đó chỉ cần bấm "Import bài mới".
+struct ImportBar: View {
+    @EnvironmentObject var player: PlayerManager
+    @EnvironmentObject var importer: FolderImporter
+    @State private var showFolderPicker = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Button {
+                    importer.importNew(into: player)
+                } label: {
+                    Label("Import bài mới", systemImage: "square.and.arrow.down")
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(importer.isImporting || importer.folderName == nil)
+                if importer.isImporting { ProgressView() }
+                Spacer()
+                Button(importer.folderName == nil ? "Chọn thư mục" : "Đổi thư mục") {
+                    showFolderPicker = true
+                }
+                .font(.subheadline)
+            }
+            if let name = importer.folderName {
+                Text("Thư mục nguồn: \(name)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            if let s = importer.status {
+                Text(s)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(.horizontal)
+        .padding(.vertical, 8)
+        .fileImporter(isPresented: $showFolderPicker,
+                      allowedContentTypes: [.folder]) { result in
+            if case .success(let url) = result { importer.setFolder(url) }
         }
     }
 }
